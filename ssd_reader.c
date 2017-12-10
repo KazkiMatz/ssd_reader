@@ -73,6 +73,7 @@ static int g_opt_t = 0;
 typedef struct EightSegment {
   int is_null;
   int is_collapsed;
+  int is_out_of_sync;
   int digit;
   int fp;
 } s_8segment;
@@ -80,10 +81,11 @@ typedef struct EightSegment {
 typedef struct SSD {
   int size;
   int gpio[8];
+  int gpio_bitmask;
   s_8segment digits[8];
   float val;
   int repeat;
-  int error; // 1: uninitialized, 2: collapsed, 3: unconfirmed
+  int error; // 1: uninitialized, 2: collapsed, 3: unconfirmed, 4: out-of-sync
 } s_ssd;
 
 void usage()
@@ -174,13 +176,14 @@ char* itob(char* buf, int val, int size){
   return buf;
 }
 
-void to_digit(unsigned int bits_0_31, s_8segment* seg)
+void to_digit(unsigned int bits_0_31, int gpio, s_8segment* seg)
 {
   int i;
   char buf[32];
 
 //printf("%s\n", itob(buf, bits_0_31, 32), i);
 //printf("%s\n", itob(buf, bits_0_31 & seg_bitpattern_digit_mask, 32), i);
+
   if (0 == (bits_0_31 & seg_bitpattern_digit_mask)) {
     seg->is_null = 1;
     seg->digit = 0;
@@ -220,9 +223,16 @@ void eval_ssd(s_ssd* ssd)
 
   digits = 0;
   for (i=0; i < ssd->size; i++) {
+    if (ssd->digits[i].is_out_of_sync) {
+      //ssd->error = 4;
+      //ssd->repeat = 0;
+      ssd->repeat -= 1;
+      return;
+    }
     if (ssd->digits[i].is_collapsed) {
-      ssd->error = 2;
-      ssd->repeat = 0;
+      //ssd->error = 2;
+      //ssd->repeat = 0;
+      ssd->repeat -= 1;
       return;
     }
     digit = ssd->digits[i].digit;
@@ -264,8 +274,8 @@ void eval_ssd(s_ssd* ssd)
 void edges(int gpio, int level, uint32_t tick, void *_ssd)
 {
    int i;
-   //char *buf;
-   unsigned int bits_0_31;
+   char *buf;
+   unsigned int bits_0_31, gpio_other_triggers;
    s_ssd *ssd = (s_ssd*)_ssd;
 
    // TODO: Make this configurable to support both Cathode/Anode LEDs
@@ -281,7 +291,15 @@ void edges(int gpio, int level, uint32_t tick, void *_ssd)
    bits_0_31 = gpioRead_Bits_0_31();
    for (i=0; i<ssd->size; i++) {
      if (ssd->gpio[i] == gpio) {
-       to_digit(bits_0_31, &ssd->digits[i]);
+
+       // should be LOW
+       //seg->is_out_of_sync = ((1<<gpio) & bits_0_31) != 0; // TODO: make this configurable
+       gpio_other_triggers = ssd->gpio_bitmask & ~(1<<gpio);
+       //printf(" %d \n", gpio_other_triggers);
+       // Other gpios should be HIGH
+       ssd->digits[i].is_out_of_sync = (gpio_other_triggers & ~bits_0_31) != 0;
+       to_digit(bits_0_31, gpio, &ssd->digits[i]);
+
        break;
      }
    }
@@ -299,9 +317,11 @@ void ssd_setup(s_ssd* ssd, int size, int* gpio)
   int i;
   int mode = PI_INPUT;
 
+  ssd->gpio_bitmask = 0;
   ssd->size = size;
   for (i=0; i<size; i++) {
     ssd->gpio[i] = gpio[i];
+    ssd->gpio_bitmask |= 1<<gpio[i];
     gpioSetAlertFuncEx(gpio[i], edges, ssd);
     gpioSetMode(gpio[i], mode);
     ssd->error = 1;
