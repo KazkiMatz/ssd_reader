@@ -51,7 +51,6 @@ sudo ./freq_count_1  4 7 8 9 -r 10 -s 1 -p 2
 #define OPT_S_DEF 5
 
 static volatile int g_pulse_count[MAX_GPIOS];
-static volatile int g_reset_counts;
 static uint32_t g_mask;
 
 static int g_num_gpios;
@@ -77,6 +76,15 @@ typedef struct EightSegment {
   int digit;
   int fp;
 } s_8segment;
+
+typedef struct SSD {
+  int size;
+  int gpio[8];
+  s_8segment digits[8];
+  float val;
+  int repeat;
+  int error; // 1: uninitialized, 2: collapsed, 3: unconfirmed
+} s_ssd;
 
 void usage()
 {
@@ -166,55 +174,139 @@ char* itob(char* buf, int val, int size){
   return buf;
 }
 
-s_8segment to_digit(unsigned int bits_0_31)
+void to_digit(unsigned int bits_0_31, s_8segment* seg)
 {
-  s_8segment seg;
   int i;
   char buf[32];
 
 //printf("%s\n", itob(buf, bits_0_31, 32), i);
 //printf("%s\n", itob(buf, bits_0_31 & seg_bitpattern_digit_mask, 32), i);
   if (0 == (bits_0_31 & seg_bitpattern_digit_mask)) {
-    seg.is_null = 1;
-    seg.digit = 0;
+    seg->is_null = 1;
+    seg->digit = 0;
   } else {
-    seg.is_null = 0;
-    seg.is_collapsed = 1;
+    seg->is_null = 0;
+    seg->is_collapsed = 1;
     for (i=0; i<10; i++) {
       if (digit_bitpatterns[i] == (bits_0_31 & seg_bitpattern_digit_mask)) {
-        seg.is_collapsed = 0;
-        seg.digit = i;
+        seg->is_collapsed = 0;
+        seg->digit = i;
         break;
       }
     }
   }
-  seg.fp = (bits_0_31 & seg_bitpattern_fp_mask) != 0;
-
-  return seg;
+  seg->fp = (bits_0_31 & seg_bitpattern_fp_mask) != 0;
 }
 
-void edges(int gpio, int level, uint32_t tick)
+void eval_ssd(s_ssd* ssd)
 {
-   int g;
+  int i, j, digit, digits, factor;
+  float next_val;
+
+  //if (ssd->reset == 1) {
+  //  //return 1;
+  //}
+
+  //ssd->reset = 1;
+
+  //v_digits = digits[0..2]
+  //v =
+  //  if v_digits.flatten.any?{|val| val.nil?}
+  //    nil
+  //  else
+  //    v_factor = 10 ** (v_digits.reverse.index{|(d, fp)| fp} || 0)
+  //    v_digits.inject(0.0) {|val, (d, fp)| val*10 + (d || 0) } / v_factor
+  //  end
+
+  digits = 0;
+  for (i=0; i < ssd->size; i++) {
+    if (ssd->digits[i].is_collapsed) {
+      ssd->error = 2;
+      ssd->repeat = 0;
+      return;
+    }
+    digit = ssd->digits[i].digit;
+//printf("%d\n", ssd->gpio[i]);
+//printf("%d\n", digit);
+    for (j=0; j < (ssd->size-i-1); j++) {
+      digit *= 10;
+    }
+    digits += digit;
+  }
+  next_val = (float) digits;
+  for (i=0; i < ssd->size; i++) {
+    if (ssd->digits[i].fp) {
+      for (j=i; j < (ssd->size-1); j++) {
+        next_val /= 10;
+      }
+      break;
+    }
+  }
+
+  if (ssd->error == 1) {
+    ssd->error = 3;
+  }
+
+  if (ssd->val == next_val) {
+    ssd->repeat++;
+    if (ssd->error == 3 && ssd->repeat > 5) { //TODO: This TH should be configurable
+      ssd->error = 0;
+    }
+  } else {
+    ssd->repeat = 0;
+    ssd->error = 3;
+    ssd->val = next_val;
+  }
+
+  return;
+}
+
+void edges(int gpio, int level, uint32_t tick, void *_ssd)
+{
+   int i;
    //char *buf;
    unsigned int bits_0_31;
-   s_8segment seg;
+   s_ssd *ssd = (s_ssd*)_ssd;
 
    // TODO: Make this configurable to support both Cathode/Anode LEDs
    /* only record high to low edges */
    if (level == 1) return;
 
-   if (g_reset_counts)
-   {
-      g_reset_counts = 0;
-      for (g=0; g<MAX_GPIOS; g++) g_pulse_count[g] = 0;
-   }
+   //if (g_reset_counts)
+   //{
+   //   g_reset_counts = 0;
+   //   for (g=0; g<MAX_GPIOS; g++) g_pulse_count[g] = 0;
+   //}
 
    bits_0_31 = gpioRead_Bits_0_31();
-   seg = to_digit(bits_0_31);
-   printf("[%d, %d, %d]\n", gpio, seg.digit, seg.fp);
+   for (i=0; i<ssd->size; i++) {
+     if (ssd->gpio[i] == gpio) {
+       to_digit(bits_0_31, &ssd->digits[i]);
+       break;
+     }
+   }
+
+   if (gpio == ssd->gpio[ssd->size-1]) {
+     eval_ssd(ssd);
+   }
+   //printf("[%d, %d, %d]\n", gpio, seg->digit, seg->fp);
    //buf = itob(bits_0_31, 32);
    //printf(" %s \n", buf);
+}
+
+void ssd_setup(s_ssd* ssd, int size, int* gpio)
+{
+  int i;
+  int mode = PI_INPUT;
+
+  ssd->size = size;
+  for (i=0; i<size; i++) {
+    ssd->gpio[i] = gpio[i];
+    gpioSetAlertFuncEx(gpio[i], edges, ssd);
+    gpioSetMode(gpio[i], mode);
+    ssd->error = 1;
+    ssd->repeat = 0;
+  }
 }
 
 int main(int argc, char *argv[])
@@ -224,6 +316,14 @@ int main(int argc, char *argv[])
    int count[MAX_GPIOS];
    char str_seg_pattern[8];
    char str_digit_bitpattern[32];
+
+   s_ssd display[2];
+
+   int v_gpio[] = {21, 20, 16};
+   int a_gpio[] = {25, 24, 23};
+
+   int error;
+   float val;
 
    /* command line parameters */
 
@@ -281,12 +381,12 @@ int main(int argc, char *argv[])
      printf(" %s (gpio: 0-27)\n", itob(str_digit_bitpattern, digit_bitpatterns[i], 27));
    }
 
-   if (!g_num_gpios) fatal(1, "At least one gpio must be specified");
+   //if (!g_num_gpios) fatal(1, "At least one gpio must be specified");
 
-   printf("Monitoring gpios");
-   for (i=0; i<g_num_gpios; i++) printf(" %d", g_digits[i]);
-   printf("\nSample rate %d micros, refresh rate %d deciseconds\n",
-      g_opt_s, g_opt_r);
+   //printf("Monitoring gpios");
+   //for (i=0; i<g_num_gpios; i++) printf(" %d", g_digits[i]);
+   //printf("\nSample rate %d micros, refresh rate %d deciseconds\n",
+   //   g_opt_s, g_opt_r);
 
    gpioCfgClock(g_opt_s, 1, 1);
 
@@ -308,9 +408,12 @@ int main(int argc, char *argv[])
 
    /* monitor g_digits level changes */
 
-   for (i=0; i<g_num_gpios; i++) gpioSetAlertFunc(g_digits[i], edges);
+   //for (i=0; i<g_num_gpios; i++) gpioSetAlertFunc(g_digits[i], edges);
+   ssd_setup(&display[0], 3, v_gpio);
+   ssd_setup(&display[1], 3, a_gpio);
 
-   mode = PI_INPUT;
+
+   //mode = PI_INPUT;
 
    //if (g_opt_t)
    //{
@@ -318,17 +421,22 @@ int main(int argc, char *argv[])
    //   mode = PI_OUTPUT;
    //}
 
-   for (i=0; i<g_num_gpios; i++) gpioSetMode(g_digits[i], mode);
+   //for (i=0; i<g_num_gpios; i++) gpioSetMode(g_digits[i], mode);
 
    while (1)
    {
-      for (i=0; i<g_num_gpios; i++) count[i] = g_pulse_count[g_digits[i]];
+      //for (i=0; i<g_num_gpios; i++) count[i] = g_pulse_count[g_digits[i]];
 
-      g_reset_counts = 1;
+      //g_reset_counts = 1;
 
-      for (i=0; i<g_num_gpios; i++)
+      for (i=0; i<2; i++)
       {
-         printf(" %d=%d", g_digits[i], count[i]);
+         printf(" %d: ", i);
+         if (display[i].error == 0) {
+           printf("[%f], ", display[i].val);
+         } else {
+           printf("[ERR(%d)], ", display[i].error);
+         }
       }
 
       printf("\n");
