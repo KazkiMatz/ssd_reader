@@ -307,9 +307,14 @@ void edges(int gpio, int level, uint32_t tick, void *_ssd)
    //   for (g=0; g<MAX_GPIOS; g++) g_pulse_count[g] = 0;
    //}
 
+   // Experimental
+   // 1000 (1ms) => 1 digit shifted
+   // gpioSleep(PI_TIME_RELATIVE, 0, 1);
+
    bits_0_31 = gpioRead_Bits_0_31();
    for (i=0; i<ssd->size; i++) {
      if (ssd->gpio[i] == gpio) {
+//printf("[%d, %d]\n", i, gpio);
 
        // should be LOW
        //seg->is_out_of_sync = ((1<<gpio) & bits_0_31) != 0; // TODO: make this configurable
@@ -331,6 +336,9 @@ void edges(int gpio, int level, uint32_t tick, void *_ssd)
    //printf(" %s \n", buf);
 }
 
+// Note that gpioSetAlertFuncEx internally do polling around 1kHz that means
+// it may have ~ms delays (which may cause trouble in our case)
+// TODO: Rather than using gpioSetAlertFuncEx, build it's own busy loop polling
 void ssd_setup(s_ssd* ssd, int size, int* gpio)
 {
   int i;
