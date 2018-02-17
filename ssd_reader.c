@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <pigpio.h>
+#include <sys/time.h>
 
 /*
 2014-08-20
@@ -69,6 +70,14 @@ static int g_opt_p = OPT_P_DEF;
 static int g_opt_r = OPT_R_DEF;
 static int g_opt_s = OPT_S_DEF;
 static int g_opt_t = 0;
+
+static char error_msgs[5][50] = {
+  {""},
+  {"Uninitialized"},
+  {"Collapsed"},
+  {"Unconfirmed"},
+  {"Out-of-sync"}
+};
 
 typedef struct EightSegment {
   int is_null;
@@ -336,6 +345,8 @@ int main(int argc, char *argv[])
    int count[MAX_GPIOS];
    char str_seg_pattern[8];
    char str_digit_bitpattern[32];
+   struct timeval my_time;
+   double unix_ts;
 
    s_ssd display[2];
 
@@ -449,17 +460,28 @@ int main(int argc, char *argv[])
 
       //g_reset_counts = 1;
 
+      gettimeofday(&my_time, NULL);
+      unix_ts = my_time.tv_sec + my_time.tv_usec/1000000.0;
+
+      printf("{\"time\":%f,", unix_ts);
+
+      printf("{\"displays\":[");
       for (i=0; i<2; i++)
       {
-         printf(" %d: ", i);
+         printf("{");
+         printf("\"idx\":%d,", i);
          if (display[i].error == 0) {
-           printf("[%f], ", display[i].val);
+           printf("\"val\":%f", display[i].val);
          } else {
-           printf("[ERR(%d)], ", display[i].error);
+           printf("\"val\":null,\"error\":%d,\"error_msg\":\"%s\"", display[i].error, error_msgs[display[i].error]);
          }
-      }
+         printf("}");
 
-      printf("\n");
+         if (i!=1) printf(",");
+      }
+      printf("]}");
+
+      printf("}\n");
 
       gpioDelay(g_opt_r * 100000);
    }
