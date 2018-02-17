@@ -233,15 +233,23 @@ void eval_ssd(s_ssd* ssd)
   digits = 0;
   for (i=0; i < ssd->size; i++) {
     if (ssd->digits[i].is_out_of_sync) {
-      //ssd->error = 4;
-      //ssd->repeat = 0;
-      ssd->repeat -= 1;
+      if (ssd->error == 1) {
+        ssd->error = 4;
+        ssd->repeat = 0;
+      } else {
+        if (ssd->repeat > 0)
+          ssd->repeat -= 1;
+      }
       return;
     }
     if (ssd->digits[i].is_collapsed) {
-      //ssd->error = 2;
-      //ssd->repeat = 0;
-      ssd->repeat -= 1;
+      if (ssd->error == 1) {
+        ssd->error = 2;
+        ssd->repeat = 0;
+      } else {
+        if (ssd->repeat > 0)
+          ssd->repeat -= 1;
+      }
       return;
     }
     digit = ssd->digits[i].digit;
@@ -267,7 +275,9 @@ void eval_ssd(s_ssd* ssd)
   }
 
   if (ssd->val == next_val) {
-    ssd->repeat++;
+    if (ssd->repeat < 50)
+      ssd->repeat++;
+
     if (ssd->error == 3 && ssd->repeat > 5) { //TODO: This TH should be configurable
       ssd->error = 0;
     }
