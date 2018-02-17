@@ -410,10 +410,10 @@ int main(int argc, char *argv[])
    {
      seg_bitpattern_digit_mask = seg_bitpattern_digit_mask | (1<<(g_segments[j]));
    }
-   printf("seg_bitpattern_digit_mask: %s (gpio: 0-27)\n", itob(str_digit_bitpattern, seg_bitpattern_digit_mask, 27));
+   fprintf(stderr, "seg_bitpattern_digit_mask: %s (gpio: 0-27)\n", itob(str_digit_bitpattern, seg_bitpattern_digit_mask, 27));
 
    seg_bitpattern_fp_mask = 1<<(g_segments[0]);
-   printf("seg_bitpattern_fp_mask:    %s (gpio: 0-27)\n", itob(str_digit_bitpattern, seg_bitpattern_fp_mask, 27));
+   fprintf(stderr, "seg_bitpattern_fp_mask:    %s (gpio: 0-27)\n", itob(str_digit_bitpattern, seg_bitpattern_fp_mask, 27));
    for (i=0; i<10; i++) // 0 1 2 3 4 5 6 7 8 9
    {
      digit_bitpatterns[i] = 0;
@@ -425,9 +425,9 @@ int main(int argc, char *argv[])
        }
      }
 
-     printf("[%d]", i);
-     printf(" %s (abcdefg.) =>", itob(str_seg_pattern, seg_patterns[i], 8));
-     printf(" %s (gpio: 0-27)\n", itob(str_digit_bitpattern, digit_bitpatterns[i], 27));
+     fprintf(stderr, "[%d]", i);
+     fprintf(stderr, " %s (abcdefg.) =>", itob(str_seg_pattern, seg_patterns[i], 8));
+     fprintf(stderr, " %s (gpio: 0-27)\n", itob(str_digit_bitpattern, digit_bitpatterns[i], 27));
    }
 
    //if (!g_num_gpios) fatal(1, "At least one gpio must be specified");
